@@ -1,0 +1,6 @@
+{
+  "name": "Game Subject Agent",
+  "description": "Specialized AI gaming companion for strict gaming Q&A, boss strategies, optimized loadout builds, and game progress & achievement tracking.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
