@@ -2,9 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildNewsBriefingScript,
-  buildWhatsAppShareUrl,
+  buildTelegramShareUrl,
   extractGroundingSources,
-  formatWhatsAppPulse,
+  formatPulseDigest,
+  formatTelegramHtmlPulse,
   parseGamingNewsDigest,
   parseRssFeedXml,
   selectArticlesForPlatform,
@@ -39,21 +40,24 @@ Team Cherry shared new combat clips highlighting Hornet's crest customization an
   assert.equal(items[4].headline, 'Hollow Knight: Silksong Showcases Fresh Pharloom Boss Footage');
 });
 
-test('formatWhatsAppPulse outputs WhatsApp-bolded headlines and emoji ranks', () => {
-  const formatted = formatWhatsAppPulse([
+test('formatPulseDigest outputs Telegram compatible digest and share URL', () => {
+  const sampleItems = [
     {
       rank: 1,
-      headline: 'PlayStation State of Play Announced',
+      headline: 'PlayStation State of Play Announced & Timed',
       summary: 'Sony revealed a 40-minute showcase covering first-party PS5 releases.',
     },
-  ]);
+  ];
+  const formatted = formatPulseDigest(sampleItems);
 
   assert.ok(formatted.startsWith('🎮 *THE GAMING PULSE* 🔥'));
-  assert.ok(formatted.includes('1️⃣ *PlayStation State of Play Announced*'));
+  assert.ok(formatted.includes('1️⃣ *PlayStation State of Play Announced & Timed*'));
   assert.ok(formatted.includes('Sony revealed a 40-minute showcase'));
 
-  const shareUrl = buildWhatsAppShareUrl(formatted);
-  assert.ok(shareUrl.startsWith('https://api.whatsapp.com/send?text='));
+  const html = formatTelegramHtmlPulse(sampleItems);
+  assert.ok(html.includes('<b>PlayStation State of Play Announced &amp; Timed</b>'));
+
+  assert.ok(buildTelegramShareUrl(formatted).startsWith('https://t.me/share/url?'));
 });
 
 test('extractGroundingSources deduplicates valid http URLs from groundingChunks', () => {
@@ -99,7 +103,7 @@ test('parseRssFeedXml and synthesizePulseFromFeedArticles build real-time top 5 
   const pulse = synthesizePulseFromFeedArticles(parsed, 'PC');
   assert.equal(pulse.items.length, 1);
   assert.equal(pulse.sources.length, 1);
-  assert.ok(pulse.whatsappMessage.includes('(PC)'));
+  assert.ok(pulse.digestMessage.includes('(PC)'));
 });
 
 test('parseRssFeedXml decodes &hellip; cleanly and selectArticlesForPlatform ranks direct PC matches first', () => {
@@ -113,13 +117,15 @@ test('parseRssFeedXml decodes &hellip; cleanly and selectArticlesForPlatform ran
     <item>
       <title>Hounded adds PS5 &amp;rsquo;26 update</title>
       <link>https://example.com/ps5-two</link>
-      <description>Delayed adventure game alongside previously announced PC &hellip;</description>
+      <description>Pok&amp;eacute;mon adventure delayed alongside PC &hellip;</description>
       <pubDate>Tue, 17 Nov 2026 11:00:00 GMT</pubDate>
     </item>
   </channel></rss>`;
 
   const mixed = parseRssFeedXml(xml, 'Gematsu', 'Nintendo');
   assert.ok(!mixed[1].summary.includes('&hellip;'));
+  assert.ok(!mixed[1].summary.includes('&eacute;'));
+  assert.ok(mixed[1].summary.includes('Pokémon'));
   assert.ok(!mixed[1].summary.endsWith('....'));
 
   const pcXml = `<rss><channel>

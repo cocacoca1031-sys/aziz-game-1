@@ -1,5 +1,5 @@
-import type { GamingNewsItem, GamingNewsSource } from '../types/gaming';
-import { sanitizeSpeechText } from './voiceHelpers';
+import type { GamingNewsItem, GamingNewsSource } from '../types/gaming.ts';
+import { sanitizeSpeechText } from './voiceHelpers.ts';
 
 export const NEWS_PLATFORM_OPTIONS = [
   'All Platforms',
@@ -83,7 +83,7 @@ export function parseGamingNewsDigest(rawText: string): GamingNewsItem[] {
     }));
 }
 
-export function formatWhatsAppPulse(
+export function formatPulseDigest(
   items: GamingNewsItem[],
   platformFilter: string = 'All Platforms'
 ): string {
@@ -104,8 +104,38 @@ export function formatWhatsAppPulse(
   return [header, ...blocks].join('\n\n');
 }
 
-export function buildWhatsAppShareUrl(whatsappMessage: string): string {
-  return `https://api.whatsapp.com/send?text=${encodeURIComponent(whatsappMessage)}`;
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+export function formatTelegramHtmlPulse(
+  items: GamingNewsItem[],
+  platformFilter: string = 'All Platforms'
+): string {
+  const scopeNote =
+    platformFilter && platformFilter !== 'All Platforms'
+      ? ` (${escapeTelegramHtml(platformFilter)})`
+      : '';
+
+  const header = `🎮 <b>THE GAMING PULSE</b>${scopeNote} 🔥\n<i>Your top 5 biggest headlines this week:</i>`;
+
+  const blocks = items.slice(0, 5).map((item, idx) => {
+    const badge = RANK_EMOJIS[idx] ?? `${idx + 1}.`;
+    const cleanHeadline = escapeTelegramHtml(stripMarkdownBold(item.headline));
+    const cleanSummary = escapeTelegramHtml(item.summary.trim());
+    return `${badge} <b>${cleanHeadline}</b>\n${cleanSummary}`;
+  });
+
+  return [header, ...blocks].join('\n\n');
+}
+
+export function buildTelegramShareUrl(digestMessage: string): string {
+  return `https://t.me/share/url?url=${encodeURIComponent('https://t.me')}&text=${encodeURIComponent(
+    digestMessage
+  )}`;
 }
 
 export function extractGroundingSources(
@@ -166,6 +196,16 @@ function decodeHtmlAndStripTags(input: string): string {
     .replace(/&trade;/gi, '™')
     .replace(/&reg;/gi, '®')
     .replace(/&copy;/gi, '©')
+    .replace(/&eacute;/g, 'é')
+    .replace(/&Eacute;/g, 'É')
+    .replace(/&aacute;/g, 'á')
+    .replace(/&iacute;/g, 'í')
+    .replace(/&oacute;/g, 'ó')
+    .replace(/&uacute;/g, 'ú')
+    .replace(/&uuml;/g, 'ü')
+    .replace(/&ouml;/g, 'ö')
+    .replace(/&ntilde;/g, 'ñ')
+    .replace(/&deg;/g, '°')
     .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_m, dec) => String.fromCharCode(Number(dec)))
     .replace(/\s+/g, ' ')
@@ -315,7 +355,7 @@ export function synthesizePulseFromFeedArticles(
 ): {
   items: GamingNewsItem[];
   sources: GamingNewsSource[];
-  whatsappMessage: string;
+  digestMessage: string;
 } {
   const selected = selectArticlesForPlatform(articles, platformFilter, 8);
   const top5 = selected.slice(0, 5);
@@ -333,6 +373,6 @@ export function synthesizePulseFromFeedArticles(
   return {
     items,
     sources,
-    whatsappMessage: formatWhatsAppPulse(items, platformFilter),
+    digestMessage: formatPulseDigest(items, platformFilter),
   };
 }

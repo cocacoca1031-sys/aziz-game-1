@@ -1,11 +1,12 @@
 import React from 'react';
-import { MessageSquare, Newspaper, Swords, Trophy } from 'lucide-react';
+import { BookOpen, MessageSquare, Newspaper, Swords, Trophy } from 'lucide-react';
 import type { AppTab } from '../types/gaming';
 
 interface BottomNavProps {
   activeTab: AppTab;
   onSelectTab: (tab: AppTab) => void;
   bossCount: number;
+  guidesCount: number;
   gamesCount: number;
 }
 
@@ -28,6 +29,12 @@ const NAV_ITEMS: {
     icon: Swords,
   },
   {
+    id: 'guides',
+    label: 'Game Guides',
+    shortLabel: 'Guides',
+    icon: BookOpen,
+  },
+  {
     id: 'progress',
     label: 'Progress Tracker',
     shortLabel: 'Progress',
@@ -45,6 +52,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   onSelectTab,
   bossCount,
+  guidesCount,
   gamesCount,
 }) => {
   return (
@@ -55,7 +63,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       <div
         role="tablist"
         aria-label="Workspace Tabs"
-        className="mx-auto grid h-16 max-w-2xl grid-cols-4 items-center px-2"
+        className="mx-auto grid h-16 max-w-3xl grid-cols-5 items-center px-1 sm:px-2"
       >
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -63,6 +71,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           const countHint =
             item.id === 'boss-hub'
               ? ` (${bossCount})`
+              : item.id === 'guides'
+              ? ` (${guidesCount})`
               : item.id === 'progress'
               ? ` (${gamesCount})`
               : '';
@@ -75,7 +85,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               aria-selected={isActive}
               aria-label={`${item.label}${countHint}`}
               onClick={() => onSelectTab(item.id)}
-              className={`relative flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-2 py-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00D4FF] ${
+              className={`relative flex min-h-[48px] flex-col items-center justify-center gap-1 rounded-xl px-1 py-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00D4FF] sm:px-2 ${
                 isActive
                   ? 'text-[#00D4FF]'
                   : 'text-slate-400 hover:text-slate-200'

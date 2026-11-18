@@ -1,4 +1,4 @@
-import type { BossGuide } from '../types/gaming';
+import type { BossGuide } from '../types/gaming.ts';
 
 export const VOICE_PRESETS = [
   { id: 'Fenrir', label: 'Fenrir (Commanding)' },

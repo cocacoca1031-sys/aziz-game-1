@@ -3,6 +3,7 @@ import { BottomNav } from './components/BottomNav';
 import { BossBuildHubView } from './components/BossBuildHubView';
 import { ChatAssistantView } from './components/ChatAssistantView';
 import { GamingNewsView } from './components/GamingNewsView';
+import { GuidesView } from './components/GuidesView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { ProgressTrackerView } from './components/ProgressTrackerView';
 import { TopAppBar } from './components/TopAppBar';
@@ -11,16 +12,36 @@ import {
   SEED_TRACKED_GAMES,
   SEED_WELCOME_MESSAGES,
 } from './data/seedData';
+import { SEED_GAME_GUIDES } from './data/seedGuides';
 import { useVoicePlayer } from './hooks/useVoicePlayer';
 import type {
   AppTab,
+  BossCoachSessionState,
   BossGuide,
   ChatMessage,
+  ChatSession,
+  GameGuide,
   GamingNewsPulse,
+  GuideAgentSessionState,
   MilestoneItem,
   TrackedGame,
 } from './types/gaming';
+import { createDefaultBossCoachState } from './utils/bossCoach';
 import { removeBossGuide } from './utils/bossFilter';
+import {
+  appendMessagesToSession,
+  createChatSession,
+  deleteChatSession,
+  migrateLegacyChatMessages,
+  renameChatSession,
+  toggleSessionPin,
+} from './utils/chatHistory';
+import { createDefaultGuideAgentState } from './utils/guideAgent';
+import {
+  removeGameGuide,
+  toggleGuideBookmark,
+  toggleGuideStep,
+} from './utils/guideFilter';
 import { addGameHours, removeTrackedGame, toggleGameItem } from './utils/progressStats';
 import {
   DEFAULT_VOICE_PRESET,
@@ -30,8 +51,14 @@ import {
 
 const STORAGE_KEYS = {
   chat: 'gsa_chat_messages_v1',
+  chatSessions: 'gsa_chat_sessions_v1',
+  activeChatId: 'gsa_active_chat_id_v1',
   bosses: 'gsa_boss_guides_v1',
   removedBosses: 'gsa_removed_boss_ids_v1',
+  bossCoach: 'gsa_boss_coach_state_v1',
+  guides: 'gsa_game_guides_v1',
+  removedGuides: 'gsa_removed_guide_ids_v1',
+  guideAgent: 'gsa_guide_agent_state_v1',
   games: 'gsa_tracked_games_v1',
   psnId: 'gsa_psn_id_v1',
   newsPulse: 'gsa_news_pulse_v1',
@@ -75,22 +102,79 @@ function loadBossGuides(): BossGuide[] {
   return missingSeeds.length > 0 ? [...merged, ...missingSeeds] : merged;
 }
 
-function loadChatMessages(): ChatMessage[] {
-  const stored = loadStored<ChatMessage[]>(STORAGE_KEYS.chat, SEED_WELCOME_MESSAGES);
-  return stored.map((msg) =>
-    msg.id === 'welcome-1' && msg.content.startsWith('Game Subject Agent ready.')
-      ? { ...msg, content: SEED_WELCOME_MESSAGES[0].content }
-      : msg
+function loadChatSessions(): ChatSession[] {
+  const storedSessions = loadStored<ChatSession[] | null>(STORAGE_KEYS.chatSessions, null);
+  if (Array.isArray(storedSessions) && storedSessions.length > 0) {
+    return storedSessions.map((session) => ({
+      ...session,
+      topicFocus: session.topicFocus || 'All Topics',
+      messages:
+        Array.isArray(session.messages) && session.messages.length > 0
+          ? session.messages
+          : SEED_WELCOME_MESSAGES,
+    }));
+  }
+
+  const legacyMessages = loadStored<ChatMessage[]>(STORAGE_KEYS.chat, SEED_WELCOME_MESSAGES).map(
+    (msg) =>
+      msg.id === 'welcome-1' && msg.content.startsWith('Game Subject Agent ready.')
+        ? { ...msg, content: SEED_WELCOME_MESSAGES[0].content }
+        : msg
   );
+
+  return migrateLegacyChatMessages(legacyMessages, SEED_WELCOME_MESSAGES);
+}
+
+function loadGameGuides(): GameGuide[] {
+  const stored = loadStored<GameGuide[]>(STORAGE_KEYS.guides, SEED_GAME_GUIDES);
+  const removedIds = new Set(loadStored<string[]>(STORAGE_KEYS.removedGuides, []));
+  const seedMap = new Map(SEED_GAME_GUIDES.map((s) => [s.id, s]));
+
+  const merged = stored
+    .filter((guide) => !removedIds.has(guide.id))
+    .map((guide) => {
+      const seed = seedMap.get(guide.id);
+      if (!seed || guide.isCustom) return guide;
+      const completedMap = new Map(guide.steps.map((st) => [st.id, Boolean(st.completed)]));
+      return {
+        ...seed,
+        bookmarked: guide.bookmarked ?? seed.bookmarked,
+        updatedAt: guide.updatedAt || seed.updatedAt,
+        steps: seed.steps.map((st) => ({
+          ...st,
+          completed: completedMap.get(st.id) ?? Boolean(st.completed),
+        })),
+      };
+    });
+
+  const existingIds = new Set(merged.map((g) => g.id));
+  const missingSeeds = SEED_GAME_GUIDES.filter(
+    (s) => !existingIds.has(s.id) && !removedIds.has(s.id)
+  );
+  return missingSeeds.length > 0 ? [...merged, ...missingSeeds] : merged;
 }
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>('chat');
   const [selectedBossId, setSelectedBossId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>(loadChatMessages);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>(loadChatSessions);
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
+    const savedId = loadStored<string>(STORAGE_KEYS.activeChatId, '');
+    return savedId;
+  });
   const [bossGuides, setBossGuides] = useState<BossGuide[]>(loadBossGuides);
   const [removedBossIds, setRemovedBossIds] = useState<string[]>(() =>
     loadStored<string[]>(STORAGE_KEYS.removedBosses, [])
+  );
+  const [bossCoachState, setBossCoachState] = useState<BossCoachSessionState>(() =>
+    loadStored<BossCoachSessionState>(STORAGE_KEYS.bossCoach, createDefaultBossCoachState())
+  );
+  const [gameGuides, setGameGuides] = useState<GameGuide[]>(loadGameGuides);
+  const [removedGuideIds, setRemovedGuideIds] = useState<string[]>(() =>
+    loadStored<string[]>(STORAGE_KEYS.removedGuides, [])
+  );
+  const [guideAgentState, setGuideAgentState] = useState<GuideAgentSessionState>(() =>
+    loadStored<GuideAgentSessionState>(STORAGE_KEYS.guideAgent, createDefaultGuideAgentState())
   );
   const [trackedGames, setTrackedGames] = useState<TrackedGame[]>(() =>
     loadStored(STORAGE_KEYS.games, SEED_TRACKED_GAMES)
@@ -110,6 +194,16 @@ export default function App() {
   const [isChatLoading, setIsChatLoading] = useState(false);
 
   const voicePlayer = useVoicePlayer();
+
+  const activeSession = useMemo(() => {
+    return chatSessions.find((s) => s.id === activeSessionId) ?? chatSessions[0];
+  }, [activeSessionId, chatSessions]);
+
+  useEffect(() => {
+    if (activeSession && activeSession.id !== activeSessionId) {
+      setActiveSessionId(activeSession.id);
+    }
+  }, [activeSession, activeSessionId]);
 
   useEffect(() => {
     try {
@@ -147,11 +241,21 @@ export default function App() {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(STORAGE_KEYS.chat, JSON.stringify(messages));
+      window.localStorage.setItem(STORAGE_KEYS.chatSessions, JSON.stringify(chatSessions));
     } catch {
       // Ignore storage quota errors
     }
-  }, [messages]);
+  }, [chatSessions]);
+
+  useEffect(() => {
+    try {
+      if (activeSession?.id) {
+        window.localStorage.setItem(STORAGE_KEYS.activeChatId, JSON.stringify(activeSession.id));
+      }
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [activeSession?.id]);
 
   useEffect(() => {
     try {
@@ -174,6 +278,38 @@ export default function App() {
 
   useEffect(() => {
     try {
+      window.localStorage.setItem(STORAGE_KEYS.bossCoach, JSON.stringify(bossCoachState));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [bossCoachState]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.guides, JSON.stringify(gameGuides));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [gameGuides]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.removedGuides, JSON.stringify(removedGuideIds));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [removedGuideIds]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(STORAGE_KEYS.guideAgent, JSON.stringify(guideAgentState));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }, [guideAgentState]);
+
+  useEffect(() => {
+    try {
       window.localStorage.setItem(STORAGE_KEYS.games, JSON.stringify(trackedGames));
     } catch {
       // Ignore storage quota errors
@@ -186,6 +322,9 @@ export default function App() {
   );
 
   const handleSendMessage = async (prompt: string) => {
+    const targetSession = activeSession;
+    if (!targetSession) return;
+
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -194,8 +333,10 @@ export default function App() {
       timestamp: new Date().toISOString(),
     };
 
-    const nextMessages = [...messages, userMsg];
-    setMessages(nextMessages);
+    const nextHistory = [...targetSession.messages, userMsg];
+    setChatSessions((prev) =>
+      appendMessagesToSession(prev, targetSession.id, [userMsg])
+    );
     setIsChatLoading(true);
 
     try {
@@ -204,7 +345,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: prompt,
-          history: nextMessages.slice(-6).map((m) => ({
+          topicFocus: targetSession.topicFocus,
+          history: nextHistory.slice(-6).map((m) => ({
             role: m.role,
             content: m.content,
           })),
@@ -213,53 +355,93 @@ export default function App() {
 
       const data = await response.json();
       if (!response.ok) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: `err-${Date.now()}`,
-            role: 'agent',
-            content: data.error || 'Unable to reach RADAHN right now.',
-            kind: 'error',
-            timestamp: new Date().toISOString(),
-          },
-        ]);
+        const errMsg: ChatMessage = {
+          id: `err-${Date.now()}`,
+          role: 'agent',
+          content: data.error || 'Unable to reach RADAHN right now.',
+          kind: 'error',
+          timestamp: new Date().toISOString(),
+        };
+        setChatSessions((prev) =>
+          appendMessagesToSession(prev, targetSession.id, [errMsg])
+        );
         return;
       }
 
       const agentMsgId = `agent-${Date.now()}`;
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: agentMsgId,
-          role: 'agent',
-          content: data.text,
-          kind: data.kind || 'general_gaming',
-          bossGuide: data.bossGuide,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      const agentMsg: ChatMessage = {
+        id: agentMsgId,
+        role: 'agent',
+        content: data.text,
+        kind: data.kind || 'general_gaming',
+        bossGuide: data.bossGuide,
+        timestamp: new Date().toISOString(),
+      };
+      setChatSessions((prev) =>
+        appendMessagesToSession(prev, targetSession.id, [agentMsg])
+      );
 
       if (autoReadVoice && data.text) {
         void voicePlayer.playText(agentMsgId, data.text, voicePreset);
       }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'agent',
-          content: 'Network connection failed. Check your connection and try again.',
-          kind: 'error',
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      const netErrMsg: ChatMessage = {
+        id: `err-${Date.now()}`,
+        role: 'agent',
+        content: 'Network connection failed. Check your connection and try again.',
+        kind: 'error',
+        timestamp: new Date().toISOString(),
+      };
+      setChatSessions((prev) =>
+        appendMessagesToSession(prev, targetSession.id, [netErrMsg])
+      );
     } finally {
       setIsChatLoading(false);
     }
   };
 
-  const handleClearChat = () => {
-    setMessages(SEED_WELCOME_MESSAGES);
+  const handleNewConversation = () => {
+    const fresh = createChatSession(SEED_WELCOME_MESSAGES, 'All Topics');
+    setChatSessions((prev) => [fresh, ...prev]);
+    setActiveSessionId(fresh.id);
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+  };
+
+  const handleDeleteSession = (sessionId: string) => {
+    setChatSessions((prev) => {
+      const result = deleteChatSession(prev, sessionId, SEED_WELCOME_MESSAGES);
+      if (activeSession?.id === sessionId) {
+        setActiveSessionId(result.nextActiveId);
+      }
+      return result.sessions;
+    });
+  };
+
+  const handleTogglePinSession = (sessionId: string) => {
+    setChatSessions((prev) => toggleSessionPin(prev, sessionId));
+  };
+
+  const handleRenameSession = (sessionId: string, nextTitle: string) => {
+    setChatSessions((prev) => renameChatSession(prev, sessionId, nextTitle));
+  };
+
+  const handleClearActiveChat = () => {
+    if (!activeSession) return;
+    setChatSessions((prev) =>
+      prev.map((session) =>
+        session.id === activeSession.id
+          ? {
+              ...session,
+              title: 'New Conversation',
+              messages: SEED_WELCOME_MESSAGES,
+              updatedAt: new Date().toISOString(),
+            }
+          : session
+      )
+    );
   };
 
   const handleAddOrSaveBossGuide = (guide: BossGuide) => {
@@ -332,11 +514,33 @@ export default function App() {
     setTrackedGames((prev) => removeTrackedGame(prev, gameId));
   };
 
+  const handleAddGuide = (guide: GameGuide) => {
+    setRemovedGuideIds((prev) => prev.filter((id) => id !== guide.id));
+    setGameGuides((prev) => [guide, ...prev.filter((g) => g.id !== guide.id)]);
+  };
+
+  const handleToggleGuideStep = (guideId: string, stepId: string) => {
+    setGameGuides((prev) => toggleGuideStep(prev, guideId, stepId));
+  };
+
+  const handleToggleGuideBookmark = (guideId: string) => {
+    setGameGuides((prev) => toggleGuideBookmark(prev, guideId));
+  };
+
+  const handleRemoveGuide = (guideId: string) => {
+    setGameGuides((prev) => removeGameGuide(prev, guideId));
+    if (SEED_GAME_GUIDES.some((s) => s.id === guideId)) {
+      setRemovedGuideIds((prev) => (prev.includes(guideId) ? prev : [...prev, guideId]));
+    }
+  };
+
   const sectionTitle =
     activeTab === 'chat'
       ? 'Chat Assistant'
       : activeTab === 'boss-hub'
       ? 'Boss & Build Hub'
+      : activeTab === 'guides'
+      ? 'Game Guides'
       : activeTab === 'news'
       ? 'Gaming News'
       : 'Progress Tracker';
@@ -346,11 +550,17 @@ export default function App() {
       <TopAppBar activeSectionTitle={sectionTitle} />
 
       <main className="w-full">
-        {activeTab === 'chat' && (
+        {activeTab === 'chat' && activeSession && (
           <ChatAssistantView
-            messages={messages}
+            sessions={chatSessions}
+            activeSession={activeSession}
+            onSelectSession={handleSelectSession}
+            onNewConversation={handleNewConversation}
+            onDeleteSession={handleDeleteSession}
+            onTogglePinSession={handleTogglePinSession}
+            onRenameSession={handleRenameSession}
             onSendMessage={handleSendMessage}
-            onClearChat={handleClearChat}
+            onClearChat={handleClearActiveChat}
             onSaveBossGuide={handleAddOrSaveBossGuide}
             savedBossIds={savedBossIds}
             bossGuides={bossGuides}
@@ -374,8 +584,27 @@ export default function App() {
             onAddBossGuide={handleAddOrSaveBossGuide}
             onUpdateBossGuide={handleUpdateBossGuide}
             onRemoveBossGuide={handleRemoveBossGuide}
+            coachState={bossCoachState}
+            onUpdateCoachState={setBossCoachState}
             selectedBossId={selectedBossId}
             onClearSelectedBossId={() => setSelectedBossId(null)}
+            playingVoiceId={voicePlayer.playingId}
+            loadingVoiceId={voicePlayer.loadingId}
+            voiceError={voicePlayer.voiceError}
+            onSpeakText={(id, text) => voicePlayer.playText(id, text, voicePreset)}
+            onClearVoiceError={voicePlayer.clearError}
+          />
+        )}
+
+        {activeTab === 'guides' && (
+          <GuidesView
+            guides={gameGuides}
+            onAddGuide={handleAddGuide}
+            onToggleStep={handleToggleGuideStep}
+            onToggleBookmark={handleToggleGuideBookmark}
+            onRemoveGuide={handleRemoveGuide}
+            agentState={guideAgentState}
+            onUpdateAgentState={setGuideAgentState}
             playingVoiceId={voicePlayer.playingId}
             loadingVoiceId={voicePlayer.loadingId}
             voiceError={voicePlayer.voiceError}
@@ -415,6 +644,7 @@ export default function App() {
         activeTab={activeTab}
         onSelectTab={setActiveTab}
         bossCount={bossGuides.length}
+        guidesCount={gameGuides.length}
         gamesCount={trackedGames.length}
       />
     </div>

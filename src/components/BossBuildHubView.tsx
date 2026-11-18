@@ -1,8 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { BookOpen, ChevronRight, Plus, Search, Sparkles, Swords, Trash2, X } from 'lucide-react';
+import {
+  BookOpen,
+  ChevronRight,
+  Crosshair,
+  Plus,
+  Search,
+  Sparkles,
+  Swords,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { GAME_CASE_DOSSIERS, GAME_CASE_MAP } from '../data/gameCases';
-import type { BossGuide } from '../types/gaming';
+import type { BossCoachSessionState, BossGuide } from '../types/gaming';
 import { filterBossGuides, getUniqueGames } from '../utils/bossFilter';
+import { BossCoachPanel } from './BossCoachPanel';
 import { BossGuideDetails } from './BossGuideDetails';
 
 interface BossBuildHubViewProps {
@@ -10,6 +21,8 @@ interface BossBuildHubViewProps {
   onAddBossGuide: (guide: BossGuide) => void;
   onUpdateBossGuide: (guide: BossGuide) => void;
   onRemoveBossGuide: (bossId: string) => void;
+  coachState: BossCoachSessionState;
+  onUpdateCoachState: (next: BossCoachSessionState) => void;
   selectedBossId?: string | null;
   onClearSelectedBossId?: () => void;
   playingVoiceId?: string | null;
@@ -34,6 +47,8 @@ export const BossBuildHubView: React.FC<BossBuildHubViewProps> = ({
   onAddBossGuide,
   onUpdateBossGuide,
   onRemoveBossGuide,
+  coachState,
+  onUpdateCoachState,
   selectedBossId,
   onClearSelectedBossId,
   playingVoiceId,
@@ -42,6 +57,7 @@ export const BossBuildHubView: React.FC<BossBuildHubViewProps> = ({
   onSpeakText,
   onClearVoiceError,
 }) => {
+  const [hubMode, setHubMode] = useState<'codex' | 'coach'>('codex');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGame, setSelectedGame] = useState('All');
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('All');
@@ -165,18 +181,66 @@ export const BossBuildHubView: React.FC<BossBuildHubViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setGenError(null);
-            setShowGenerator(true);
-          }}
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#00D4FF] px-4 py-2 text-xs font-semibold text-[#090B10] transition-colors hover:bg-[#38DFFF] whitespace-nowrap shrink-0 cursor-pointer"
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Generate Boss Build
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <div
+            role="tablist"
+            aria-label="Boss Hub workspace mode"
+            className="inline-flex rounded-xl border border-white/[0.08] bg-[#11151E] p-1"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={hubMode === 'codex'}
+              onClick={() => setHubMode('codex')}
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                hubMode === 'codex'
+                  ? 'bg-[#182232] text-[#00D4FF]'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Swords className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Boss Codex</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={hubMode === 'coach'}
+              onClick={() => setHubMode('coach')}
+              className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-colors whitespace-nowrap cursor-pointer ${
+                hubMode === 'coach'
+                  ? 'bg-[#182232] text-[#00D4FF]'
+                  : 'text-slate-300 hover:text-white'
+              }`}
+            >
+              <Crosshair className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>AI Boss Coach</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setGenError(null);
+              setShowGenerator(true);
+            }}
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-[#00D4FF] px-4 py-2 text-xs font-semibold text-[#090B10] transition-colors hover:bg-[#38DFFF] whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            Generate Boss Build
+          </button>
+        </div>
       </div>
+
+      {hubMode === 'coach' ? (
+        <BossCoachPanel
+          coachState={coachState}
+          onUpdateState={onUpdateCoachState}
+          playingVoiceId={playingVoiceId}
+          loadingVoiceId={loadingVoiceId}
+          onSpeakText={onSpeakText}
+        />
+      ) : (
+        <>
 
       {/* Search, Difficulty & Game Filter Bar */}
       <div className="mt-4 space-y-3">
@@ -592,6 +656,26 @@ export const BossBuildHubView: React.FC<BossBuildHubViewProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => {
+                    onUpdateCoachState({
+                      ...coachState,
+                      bossName: activeGuide.bossName,
+                      gameTitle: activeGuide.gameTitle,
+                      reachedPhase: 'phase1',
+                      updatedAt: new Date().toISOString(),
+                    });
+                    setConfirmRemoveBossId(null);
+                    setActiveGuideId(null);
+                    setHubMode('coach');
+                  }}
+                  aria-label={`Coach me on ${activeGuide.bossName}`}
+                  className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#00D4FF]/40 bg-[#0D1A26] px-3 text-xs font-semibold text-[#00D4FF] transition-colors hover:bg-[#00D4FF]/15 cursor-pointer"
+                >
+                  <Crosshair className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Coach This Fight</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() =>
                     setConfirmRemoveBossId((prev) =>
                       prev === activeGuide.id ? null : activeGuide.id
@@ -776,6 +860,9 @@ export const BossBuildHubView: React.FC<BossBuildHubViewProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+        </>
       )}
     </div>
   );

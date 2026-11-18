@@ -1,4 +1,4 @@
-import type { MilestoneItem } from '../types/gaming';
+import type { MilestoneItem } from '../types/gaming.ts';
 import { extractGameTitleFromPsnUrl, normalizePsnGameUrl } from './psnProfiles.ts';
 
 export interface ParsedGameQuery {
